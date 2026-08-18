@@ -14,6 +14,9 @@ const server = http.createServer(function handler(req, res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Permissions-Policy', 'interest-cohort=()');
+  // Allow the extension.js file (and other static assets) to be fetched from
+  // turbowarp.org and other origins when loading this as a custom extension.
+  res.setHeader('Access-Control-Allow-Origin', '*');
   // @ts-ignore
   serve(req, res, finalhandler(req, res));
 });
