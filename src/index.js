@@ -5,7 +5,8 @@ const serveStatic = require('serve-static');
 
 const logger = require('./logger');
 const config = require('./config');
-const wss = require('./server');
+const {wss, rooms} = require('./server');
+const validators = require('./validators');
 
 // We serve static files over HTTP
 const serve = serveStatic('public');
@@ -17,6 +18,21 @@ const server = http.createServer(function handler(req, res) {
   // Allow the extension.js file (and other static assets) to be fetched from
   // turbowarp.org and other origins when loading this as a custom extension.
   res.setHeader('Access-Control-Allow-Origin', '*');
+
+  // Lets the extension check whether a room is currently occupied without
+  // opening a full WebSocket connection to it.
+  const url = new URL(req.url, 'http://localhost');
+  if (url.pathname === '/api/room-info') {
+    const roomId = url.searchParams.get('room') || '';
+    let peers = 0;
+    if (validators.isValidRoomID(roomId) && rooms.has(roomId)) {
+      peers = rooms.get(roomId).getClients().length;
+    }
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({room: roomId, taken: peers > 0, peers}));
+    return;
+  }
+
   // @ts-ignore
   serve(req, res, finalhandler(req, res));
 });

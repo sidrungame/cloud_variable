@@ -10,9 +10,19 @@
   }
 
   const SERVER_URL = 'wss://cloud-server-sidrungame.onrender.com/';
+  const HTTP_URL = SERVER_URL.replace(/^ws/, 'http');
   const REPO_URL = 'https://github.com/sidrungame/cloud_variable';
 
   const CHANGELOG = [
+    {
+      date: '2026-08-18b',
+      title: '10 nouveaux blocs',
+      points: [
+        'Ajout de blocs pour vérifier si une room est prise, si une variable existe, compter les joueurs connectés, augmenter une variable, la supprimer/renommer, et deux nouveaux événements de connexion/déconnexion.',
+        'Les blocs "room prise ?" et "nombre de joueurs" interrogent le serveur en direct (petit délai réseau, normal).',
+        'Supprimer/renommer une variable ne fonctionne que si ces options sont activées côté serveur (désactivées par défaut).',
+      ],
+    },
     {
       date: '2026-08-18',
       title: 'Lancement du serveur',
@@ -40,6 +50,8 @@
       this.seenByHat = new Map();
       this.reconnectDelay = 1000;
       this.shouldReconnect = false;
+      this._lastForConnectedHat = false;
+      this._lastForDisconnectedHat = false;
     }
 
     connect(room, username) {
@@ -137,6 +149,52 @@
       const last = this.seenByHat.has(name) ? this.seenByHat.get(name) : '';
       this.seenByHat.set(name, current);
       return current !== last;
+    }
+
+    hasVar(name) {
+      return this.values.has(name);
+    }
+
+    deleteVar(name) {
+      this.values.delete(name);
+      this._send({ method: 'delete', name });
+    }
+
+    renameVar(oldName, newName) {
+      if (this.values.has(oldName)) {
+        this.values.set(newName, this.values.get(oldName));
+        this.values.delete(oldName);
+      }
+      this._send({ method: 'rename', name: oldName, new_name: newName });
+    }
+
+    listVarNames() {
+      return Array.from(this.values.keys()).join(', ');
+    }
+
+    justConnected() {
+      const now = this.connected;
+      const fired = now && !this._lastForConnectedHat;
+      this._lastForConnectedHat = now;
+      return fired;
+    }
+
+    justDisconnected() {
+      const now = this.connected;
+      const fired = !now && this._lastForDisconnectedHat;
+      this._lastForDisconnectedHat = now;
+      return fired;
+    }
+
+    async fetchRoomInfo(room) {
+      try {
+        const response = await fetch(`${HTTP_URL}api/room-info?room=${encodeURIComponent(room)}`);
+        if (!response.ok) return null;
+        return await response.json();
+      } catch (e) {
+        console.error('[Sidrungame Cloud] Impossible de vérifier la room :', e);
+        return null;
+      }
     }
   }
 
@@ -265,6 +323,80 @@
               NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'score' },
             },
           },
+          {
+            opcode: 'variableExists',
+            blockType: Scratch.BlockType.BOOLEAN,
+            text: 'variable [NAME] existe?',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'score' },
+            },
+          },
+          {
+            opcode: 'increaseVar',
+            blockType: Scratch.BlockType.COMMAND,
+            text: 'increase cloud variable [NAME] by [DELTA]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'score' },
+              DELTA: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 },
+            },
+          },
+          {
+            opcode: 'deleteVar',
+            blockType: Scratch.BlockType.COMMAND,
+            text: 'delete cloud variable [NAME]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'score' },
+            },
+          },
+          {
+            opcode: 'renameVar',
+            blockType: Scratch.BlockType.COMMAND,
+            text: 'rename cloud variable [OLD_NAME] to [NEW_NAME]',
+            arguments: {
+              OLD_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'score' },
+              NEW_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'score2' },
+            },
+          },
+          {
+            opcode: 'listVarNames',
+            blockType: Scratch.BlockType.REPORTER,
+            text: 'list of known cloud variables',
+          },
+          '---',
+          {
+            opcode: 'roomTaken',
+            blockType: Scratch.BlockType.BOOLEAN,
+            text: 'room name [ROOM] pris?',
+            arguments: {
+              ROOM: { type: Scratch.ArgumentType.STRING, defaultValue: 'my-project' },
+            },
+          },
+          {
+            opcode: 'playersInRoom',
+            blockType: Scratch.BlockType.REPORTER,
+            text: 'number of players in room [ROOM]',
+            arguments: {
+              ROOM: { type: Scratch.ArgumentType.STRING, defaultValue: 'my-project' },
+            },
+          },
+          {
+            opcode: 'currentRoom',
+            blockType: Scratch.BlockType.REPORTER,
+            text: 'current room name',
+          },
+          '---',
+          {
+            opcode: 'whenConnected',
+            blockType: Scratch.BlockType.HAT,
+            text: 'when connected to cloud server',
+            isEdgeActivated: true,
+          },
+          {
+            opcode: 'whenDisconnected',
+            blockType: Scratch.BlockType.HAT,
+            text: 'when disconnected from cloud server',
+            isEdgeActivated: true,
+          },
         ],
       };
     }
@@ -299,6 +431,51 @@
 
     whenChanged(args) {
       return client.hasChanged(String(args.NAME));
+    }
+
+    variableExists(args) {
+      return client.hasVar(String(args.NAME));
+    }
+
+    increaseVar(args) {
+      const name = String(args.NAME);
+      const current = Number(client.getVar(name)) || 0;
+      const delta = Number(args.DELTA) || 0;
+      client.setVar(name, current + delta);
+    }
+
+    deleteVar(args) {
+      client.deleteVar(String(args.NAME));
+    }
+
+    renameVar(args) {
+      client.renameVar(String(args.OLD_NAME), String(args.NEW_NAME));
+    }
+
+    listVarNames() {
+      return client.listVarNames();
+    }
+
+    async roomTaken(args) {
+      const info = await client.fetchRoomInfo(String(args.ROOM));
+      return !!(info && info.taken);
+    }
+
+    async playersInRoom(args) {
+      const info = await client.fetchRoomInfo(String(args.ROOM));
+      return info ? info.peers : 0;
+    }
+
+    currentRoom() {
+      return client.room || '';
+    }
+
+    whenConnected() {
+      return client.justConnected();
+    }
+
+    whenDisconnected() {
+      return client.justDisconnected();
     }
   }
 

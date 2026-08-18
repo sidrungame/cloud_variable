@@ -316,4 +316,4 @@ wss.on('close', () => {
   rooms.destroy();
 });
 
-module.exports = wss;
+module.exports = {wss, rooms};
